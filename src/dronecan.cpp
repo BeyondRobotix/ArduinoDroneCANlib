@@ -719,4 +719,5 @@ bool DroneCANshoudlAcceptTransfer(const CanardInstance *ins,
         }
         }
     }
+    return false;
 }
