@@ -77,6 +77,7 @@ public:
     void processTx();
     void processRx();
     void cycle();
+    void debug(const char *msg, uint8_t level);
 
     struct dynamic_node_allocation
     {
