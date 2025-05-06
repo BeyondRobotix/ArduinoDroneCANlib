@@ -136,79 +136,95 @@ void DroneCAN::handle_GetNodeInfo(CanardRxTransfer *transfer)
  */
 void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
 {
+    // Decode the incoming request
     struct uavcan_protocol_param_GetSetRequest req;
     if (uavcan_protocol_param_GetSetRequest_decode(transfer, &req))
     {
-        return;
+        return; // malformed
     }
 
-    struct parameter *p = NULL;
-    if (req.name.len != 0)
+    IWatchdog.reload();
+
+    // Figure out which parameter they meant
+    size_t idx = SIZE_MAX;
+
+    if ((int)req.name.len > 0)
     {
-        for (uint16_t i = 0; i < ARRAY_SIZE(parameters); i++)
+        // Name‐based lookup
+        Serial.print("Name based lookup");
+        for (size_t i = 0; i < parameters.size(); i++)
         {
-            if (req.name.len == strlen(parameters[i].name) &&
-                strncmp((const char *)req.name.data, parameters[i].name, req.name.len) == 0)
+            auto &p = parameters[i];
+            if (req.name.len == strlen(p.name) &&
+                memcmp(req.name.data, p.name, req.name.len) == 0)
             {
-                p = &parameters[i];
-                req.index = i;
+                idx = i;
+                Serial.println(idx);
                 break;
             }
         }
     }
-    else if (req.index < ARRAY_SIZE(parameters))
+    // If that failed, try index‐based lookup
+    if (idx == SIZE_MAX && req.index < parameters.size())
     {
-        p = &parameters[req.index];
+        idx = req.index;
+        Serial.print("Parameter index lookup");
+        Serial.println(idx);
     }
-    if (p != NULL && req.name.len != 0 && req.value.union_tag != UAVCAN_PROTOCOL_PARAM_VALUE_EMPTY)
+
+    IWatchdog.reload();
+
+    // If it’s a _set_ request, apply the new value
+    if (idx != SIZE_MAX && req.value.union_tag != UAVCAN_PROTOCOL_PARAM_VALUE_EMPTY)
     {
-        /*
-          this is a parameter set command. The implementation can
-          either choose to store the value in a persistent manner
-          immediately or can instead store it in memory and save to permanent storage on a
-         */
-        switch (p->type)
+        auto &p = parameters[idx];
+        switch (p.type)
         {
         case UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE:
-            p->value = req.value.integer_value;
-            EEPROM.put(req.index * 4, p->value);
+            p.value = req.value.integer_value;
+            EEPROM.put(idx * sizeof(float), p.value);
             break;
         case UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE:
-            p->value = req.value.real_value;
-            EEPROM.put(req.index * 4, p->value);
+            p.value = req.value.real_value;
+            EEPROM.put(idx * sizeof(float), p.value);
             break;
         default:
-            return;
+            // unsupported type
+            break;
         }
     }
 
-    /*
-      for both set and get we reply with the current value
-     */
-    struct uavcan_protocol_param_GetSetResponse pkt;
-    memset(&pkt, 0, sizeof(pkt));
+    IWatchdog.reload();
 
-    if (p != NULL)
+    // Now build the GetSet _response_, always sending one back
+    struct uavcan_protocol_param_GetSetResponse rsp;
+    memset(&rsp, 0, sizeof(rsp));
+
+    if (idx != SIZE_MAX)
     {
-        pkt.value.union_tag = p->type;
-        switch (p->type)
+        auto &p = parameters[idx];
+        // tag + value
+        rsp.value.union_tag = p.type;
+        if (p.type == UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE)
         {
-        case UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE:
-            pkt.value.integer_value = p->value;
-            break;
-        case UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE:
-            pkt.value.real_value = p->value;
-            break;
-        default:
-            return;
+            rsp.value.integer_value = p.value;
         }
-        pkt.name.len = strlen(p->name);
-        strcpy((char *)pkt.name.data, p->name);
-    }
+        else
+        {
+            rsp.value.real_value = p.value;
+        }
 
+        // copy name (must pad/zero any unused bytes)
+        size_t namelen = strlen(p.name);
+        rsp.name.len = namelen;
+        memset(rsp.name.data, 0, sizeof(rsp.name.data));
+        memcpy(rsp.name.data, p.name, namelen);
+    }
+    // else idx==SIZE_MAX: leave rsp.name.len=0 / value empty
+
+    // Encode & send
     uint8_t buffer[UAVCAN_PROTOCOL_PARAM_GETSET_RESPONSE_MAX_SIZE];
-    uint16_t total_size = uavcan_protocol_param_GetSetResponse_encode(&pkt, buffer);
-
+    uint16_t len = uavcan_protocol_param_GetSetResponse_encode(&rsp, buffer);
     canardRequestOrRespond(&canard,
                            transfer->source_node_id,
                            UAVCAN_PROTOCOL_PARAM_GETSET_SIGNATURE,
@@ -217,7 +233,7 @@ void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
                            transfer->priority,
                            CanardResponse,
                            &buffer[0],
-                           total_size);
+                           len);
 }
 
 /*
@@ -232,11 +248,19 @@ void DroneCAN::handle_param_ExecuteOpcode(CanardRxTransfer *transfer)
     }
     if (req.opcode == UAVCAN_PROTOCOL_PARAM_EXECUTEOPCODE_REQUEST_OPCODE_ERASE)
     {
-        // here is where you would reset all parameters to defaults
+        // Reset all parameters to defaults
+        for (size_t i = 0; i < parameters.size(); i++)
+        {
+            parameters[i].value = parameters[i].min_value; // Or some default value
+        }
     }
     if (req.opcode == UAVCAN_PROTOCOL_PARAM_EXECUTEOPCODE_REQUEST_OPCODE_SAVE)
     {
-        // here is where you would save all the changed parameters to permanent storage
+        // Save all the changed parameters to permanent storage
+        for (size_t i = 0; i < parameters.size(); i++)
+        {
+            EEPROM.put(i * 4, parameters[i].value);
+        }
     }
 
     struct uavcan_protocol_param_ExecuteOpcodeResponse pkt;
@@ -263,14 +287,12 @@ Read the EEPROM parameter storage and set the current parameter list to the read
 */
 void DroneCAN::read_parameter_memory()
 {
-    struct parameter *p = NULL;
     float p_val = 0.0;
 
-    for (uint16_t i = 0; i < ARRAY_SIZE(parameters); i++)
+    for (size_t i = 0; i < parameters.size(); i++)
     {
         EEPROM.get(i * 4, p_val);
-        p = &parameters[i];
-        p->value = p_val;
+        parameters[i].value = p_val;
     }
 }
 
@@ -452,7 +474,7 @@ void DroneCAN::handle_begin_firmware_update(CanardRxTransfer *transfer)
     uavcan_protocol_file_BeginFirmwareUpdateResponse reply{};
     reply.error = UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_RESPONSE_ERROR_OK;
 
-    uint32_t total_size = uavcan_protocol_file_BeginFirmwareUpdateResponse_encode(&reply, buffer);
+    uint16_t total_size = uavcan_protocol_file_BeginFirmwareUpdateResponse_encode(&reply, buffer);
     static uint8_t transfer_id;
     CanardTxTransfer transfer_object = {
         .transfer_type = CanardTransferTypeResponse,
@@ -627,8 +649,8 @@ void DroneCAN::processRx()
         int ret = canardHandleRxFrame(&canard, &CAN_rx_msg, timestamp);
         if (ret < 0)
         {
-            Serial.print("Canard RX fail");
-            Serial.println(ret);
+            // Serial.print("Canard RX fail");
+            // Serial.println(ret);
         }
     }
 }

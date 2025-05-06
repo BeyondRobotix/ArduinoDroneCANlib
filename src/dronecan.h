@@ -5,6 +5,8 @@
 #include <Arduino.h>
 #include <can.h>
 #include <EEPROM.h>
+#include <vector>
+#include <IWatchdog.h>
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define C_TO_KELVIN(temp) (temp + 273.15f)
@@ -33,33 +35,32 @@ protected:
         uint32_t offset;
     } fwupdate;
 
+    // Returns the Node ID from parameter, if not set, returns the preferred node ID
+    uint8_t get_preferred_node_id();
+
+    static constexpr uint16_t PARAM_EEPROM_BASE = 0x0000;  // EEPROM base address
+    std::vector<size_t> sorted_indices;             // built on first use
+
+public:
     struct parameter
     {
-        char *name;
+        const char *name;
         enum uavcan_protocol_param_Value_type_t type;
         float value;
         float min_value;
         float max_value;
     };
 
-    // Returns the Node ID from parameter, if not set, returns the preferred node ID
-    uint8_t get_preferred_node_id();
+    std::vector<parameter> parameters; 
 
-public:
+    void set_parameters(const std::vector<parameter>& param_list) {
+        parameters = param_list;  // Vector automatically handles resizing
+    }
+
     void init(CanardOnTransferReception onTransferReceived, CanardShouldAcceptTransfer shouldAcceptTransfer);
     int node_id = 0;
 
     CanardInstance canard;
-    parameter parameters[8] = {
-        {"NODEID", UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE, 0, 127, 69},
-        {"PARM_1", UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE, 0.0, 0.0, 1.0},
-        {"PARM_2", UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE, 0.0, 0.0, 2.0},
-        {"PARM_3", UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE, 0.0, 0.0, 3.0},
-        {"PARM_4", UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE, 0.0, 0.0, 4.0},
-        {"PARM_5", UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE, 0.0, 0.0, 5.0},
-        {"PARM_6", UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE, 0.0, 0.0, 6.0},
-        {"PARM_7", UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE, 0.0, 0.0, 7.0},
-    };
 
     static uint64_t micros64();
     static void getUniqueID(uint8_t id[16]);
@@ -95,7 +96,8 @@ bool DroneCANshoudlAcceptTransfer(const CanardInstance *ins,
 
 #define APP_BOOTLOADER_COMMS_MAGIC 0xc544ad9a
 
-struct app_bootloader_comms {
+struct app_bootloader_comms
+{
     uint32_t magic;
     uint32_t ip;
     uint32_t netmask;
