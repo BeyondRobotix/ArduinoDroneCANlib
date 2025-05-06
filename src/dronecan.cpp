@@ -18,9 +18,8 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
     }
     else
     {
-        Serial.println("Waiting for DNA node allocation\n");
+        Serial.println("Waiting for DNA node allocation");
     }
-
     // initialise the internal LED
     pinMode(19, OUTPUT);
 
@@ -432,6 +431,50 @@ void DroneCAN::request_DNA()
  */
 void DroneCAN::handle_begin_firmware_update(CanardRxTransfer *transfer)
 {
+    auto *comms = (struct app_bootloader_comms *)0x20000000;
+    comms->magic = APP_BOOTLOADER_COMMS_MAGIC;
+    NVIC_SystemReset();
+    uavcan_protocol_file_BeginFirmwareUpdateRequest req;
+    if (uavcan_protocol_file_BeginFirmwareUpdateRequest_decode(transfer, &req))
+    {
+        return;
+    }
+
+    comms->server_node_id = req.source_node_id;
+    if (comms->server_node_id == 0)
+    {
+        comms->server_node_id = transfer->source_node_id;
+    }
+    memcpy(comms->path, req.image_file_remote_path.path.data, req.image_file_remote_path.path.len);
+    comms->my_node_id = canardGetLocalNodeID(&canard);
+
+    uint8_t buffer[UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_RESPONSE_MAX_SIZE];
+    uavcan_protocol_file_BeginFirmwareUpdateResponse reply{};
+    reply.error = UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_RESPONSE_ERROR_OK;
+
+    uint32_t total_size = uavcan_protocol_file_BeginFirmwareUpdateResponse_encode(&reply, buffer);
+    static uint8_t transfer_id;
+    CanardTxTransfer transfer_object = {
+        .transfer_type = CanardTransferTypeResponse,
+        .data_type_signature = UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_SIGNATURE,
+        .data_type_id = UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_ID,
+        .inout_transfer_id = &transfer->transfer_id,
+        .priority = transfer->priority,
+        .payload = &buffer[0],
+        .payload_len = total_size,
+    };
+    const auto res = canardRequestOrRespondObj(&canard,
+                                               transfer->source_node_id,
+                                               &transfer_object);
+
+    uint8_t count = 50;
+    while (count--)
+    {
+        processTx();
+        delay(1);
+    }
+
+    NVIC_SystemReset();
 }
 
 /*
@@ -638,7 +681,7 @@ void DroneCANonTransferReceived(DroneCAN &dronecan, CanardInstance *ins, CanardR
         {
             while (1)
             {
-            }; // force the watchdog to reset
+            }
         }
         case UAVCAN_PROTOCOL_PARAM_GETSET_ID:
         {

@@ -156,6 +156,8 @@ bool CANInit(BITRATE bitrate, int remap)
     // Reference manual
     // https://www.st.com/content/ccc/resource/technical/document/reference_manual/4a/19/6e/18/9d/92/43/32/DM00043574.pdf/files/DM00043574.pdf/jcr:content/translations/en.DM00043574.pdf
 
+    CAN1->MCR = CAN_MCR_RESET;
+
     RCC->APB1ENR1 |= 0x2000000UL; // Enable CAN clock
 
     if (remap == 0)
@@ -211,7 +213,7 @@ bool CANInit(BITRATE bitrate, int remap)
     CANSetFilter(0, 1, 0, 0, 0x0UL, 0x0UL);
 
     CAN1->FMR &= ~(0x1UL); // Deactivate initialization mode
-
+    
     uint16_t TimeoutMilliseconds = 1000;
     bool can1 = false;
     CAN1->MCR &= ~(0x1UL); // Require CAN1 to normal mode
@@ -225,10 +227,10 @@ bool CANInit(BITRATE bitrate, int remap)
             can1 = true;
             break;
         }
-        delayMicroseconds(1000);
+        // delay(1);
+        CAN1->MCR &= ~(0x1UL); // Require CAN1 to normal mode
+        Serial.println("CAN normal mode attempt again");
     }
-    // Serial.print("can1=");
-    // Serial.println(can1);
     if (can1)
     {
         Serial.println("CAN1 initialize ok");

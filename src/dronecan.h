@@ -92,4 +92,17 @@ bool DroneCANshoudlAcceptTransfer(const CanardInstance *ins,
                                   uint16_t data_type_id,
                                   CanardTransferType transfer_type,
                                   uint8_t source_node_id);
+
+#define APP_BOOTLOADER_COMMS_MAGIC 0xc544ad9a
+
+struct app_bootloader_comms {
+    uint32_t magic;
+    uint32_t ip;
+    uint32_t netmask;
+    uint32_t gateway;
+    uint32_t reserved;
+    uint8_t server_node_id;
+    uint8_t my_node_id;
+    uint8_t path[201];
+};
 #endif // ARDU_DRONECAN
