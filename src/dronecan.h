@@ -57,11 +57,11 @@ public:
         parameters = param_list;  // Vector automatically handles resizing
     }
 
-    void init(CanardOnTransferReception onTransferReceived, CanardShouldAcceptTransfer shouldAcceptTransfer);
+    void init(CanardOnTransferReception onTransferReceived, CanardShouldAcceptTransfer shouldAcceptTransfer, const std::vector<parameter>& param_list);
     int node_id = 0;
 
     CanardInstance canard;
-
+    uint64_t uptime = 0;
     static uint64_t micros64();
     static void getUniqueID(uint8_t id[16]);
     void handle_GetNodeInfo(CanardRxTransfer *transfer);

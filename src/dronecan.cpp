@@ -1,7 +1,8 @@
 #include <dronecan.h>
 
 void DroneCAN::init(CanardOnTransferReception onTransferReceived,
-                    CanardShouldAcceptTransfer shouldAcceptTransfer)
+                    CanardShouldAcceptTransfer shouldAcceptTransfer,
+                    const std::vector<parameter>& param_list)
 {
     CANInit(CAN_1000KBPS, 2);
 
@@ -22,6 +23,9 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
     }
     // initialise the internal LED
     pinMode(19, OUTPUT);
+
+    // put our user params into memory
+    set_parameters(param_list);
 
     // get the parameters in the EEPROM
     this->read_parameter_memory();
@@ -100,7 +104,7 @@ void DroneCAN::handle_GetNodeInfo(CanardRxTransfer *transfer)
 
     memset(&pkt, 0, sizeof(pkt));
 
-    node_status.uptime_sec = micros64() / 1000000ULL;
+    node_status.uptime_sec = uptime;
     pkt.status = node_status;
 
     // fill in your major and minor firmware version
@@ -453,9 +457,15 @@ void DroneCAN::request_DNA()
  */
 void DroneCAN::handle_begin_firmware_update(CanardRxTransfer *transfer)
 {
+    Serial.println("Update request received");
+
     auto *comms = (struct app_bootloader_comms *)0x20000000;
+    
+    if (comms->magic != APP_BOOTLOADER_COMMS_MAGIC) {
+        memset(comms, 0, sizeof(*comms));
+    }
     comms->magic = APP_BOOTLOADER_COMMS_MAGIC;
-    NVIC_SystemReset();
+
     uavcan_protocol_file_BeginFirmwareUpdateRequest req;
     if (uavcan_protocol_file_BeginFirmwareUpdateRequest_decode(transfer, &req))
     {
@@ -585,7 +595,7 @@ void DroneCAN::send_NodeStatus(void)
 {
     uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE];
 
-    node_status.uptime_sec = micros64() / 1000000ULL;
+    node_status.uptime_sec = uptime++;
     node_status.health = UAVCAN_PROTOCOL_NODESTATUS_HEALTH_OK;
     node_status.mode = UAVCAN_PROTOCOL_NODESTATUS_MODE_OPERATIONAL;
     node_status.sub_mode = 0;
