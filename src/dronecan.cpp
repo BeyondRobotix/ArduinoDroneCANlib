@@ -1,7 +1,8 @@
 #include <dronecan.h>
 
 void DroneCAN::init(CanardOnTransferReception onTransferReceived,
-                    CanardShouldAcceptTransfer shouldAcceptTransfer)
+                    CanardShouldAcceptTransfer shouldAcceptTransfer,
+                    const std::vector<parameter>& param_list)
 {
     CANInit(CAN_1000KBPS, 2);
 
@@ -18,11 +19,13 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
     }
     else
     {
-        Serial.println("Waiting for DNA node allocation\n");
+        Serial.println("Waiting for DNA node allocation");
     }
-
     // initialise the internal LED
     pinMode(19, OUTPUT);
+
+    // put our user params into memory
+    set_parameters(param_list);
 
     // get the parameters in the EEPROM
     this->read_parameter_memory();
@@ -101,7 +104,7 @@ void DroneCAN::handle_GetNodeInfo(CanardRxTransfer *transfer)
 
     memset(&pkt, 0, sizeof(pkt));
 
-    node_status.uptime_sec = micros64() / 1000000ULL;
+    node_status.uptime_sec = uptime;
     pkt.status = node_status;
 
     // fill in your major and minor firmware version
@@ -137,79 +140,95 @@ void DroneCAN::handle_GetNodeInfo(CanardRxTransfer *transfer)
  */
 void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
 {
+    // Decode the incoming request
     struct uavcan_protocol_param_GetSetRequest req;
     if (uavcan_protocol_param_GetSetRequest_decode(transfer, &req))
     {
-        return;
+        return; // malformed
     }
 
-    struct parameter *p = NULL;
-    if (req.name.len != 0)
+    IWatchdog.reload();
+
+    // Figure out which parameter they meant
+    size_t idx = SIZE_MAX;
+
+    if ((int)req.name.len > 0)
     {
-        for (uint16_t i = 0; i < ARRAY_SIZE(parameters); i++)
+        // Name‐based lookup
+        Serial.print("Name based lookup");
+        for (size_t i = 0; i < parameters.size(); i++)
         {
-            if (req.name.len == strlen(parameters[i].name) &&
-                strncmp((const char *)req.name.data, parameters[i].name, req.name.len) == 0)
+            auto &p = parameters[i];
+            if (req.name.len == strlen(p.name) &&
+                memcmp(req.name.data, p.name, req.name.len) == 0)
             {
-                p = &parameters[i];
-                req.index = i;
+                idx = i;
+                Serial.println(idx);
                 break;
             }
         }
     }
-    else if (req.index < ARRAY_SIZE(parameters))
+    // If that failed, try index‐based lookup
+    if (idx == SIZE_MAX && req.index < parameters.size())
     {
-        p = &parameters[req.index];
+        idx = req.index;
+        Serial.print("Parameter index lookup");
+        Serial.println(idx);
     }
-    if (p != NULL && req.name.len != 0 && req.value.union_tag != UAVCAN_PROTOCOL_PARAM_VALUE_EMPTY)
+
+    IWatchdog.reload();
+
+    // If it’s a _set_ request, apply the new value
+    if (idx != SIZE_MAX && req.value.union_tag != UAVCAN_PROTOCOL_PARAM_VALUE_EMPTY)
     {
-        /*
-          this is a parameter set command. The implementation can
-          either choose to store the value in a persistent manner
-          immediately or can instead store it in memory and save to permanent storage on a
-         */
-        switch (p->type)
+        auto &p = parameters[idx];
+        switch (p.type)
         {
         case UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE:
-            p->value = req.value.integer_value;
-            EEPROM.put(req.index * 4, p->value);
+            p.value = req.value.integer_value;
+            EEPROM.put(idx * sizeof(float), p.value);
             break;
         case UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE:
-            p->value = req.value.real_value;
-            EEPROM.put(req.index * 4, p->value);
+            p.value = req.value.real_value;
+            EEPROM.put(idx * sizeof(float), p.value);
             break;
         default:
-            return;
+            // unsupported type
+            break;
         }
     }
 
-    /*
-      for both set and get we reply with the current value
-     */
-    struct uavcan_protocol_param_GetSetResponse pkt;
-    memset(&pkt, 0, sizeof(pkt));
+    IWatchdog.reload();
 
-    if (p != NULL)
+    // Now build the GetSet _response_, always sending one back
+    struct uavcan_protocol_param_GetSetResponse rsp;
+    memset(&rsp, 0, sizeof(rsp));
+
+    if (idx != SIZE_MAX)
     {
-        pkt.value.union_tag = p->type;
-        switch (p->type)
+        auto &p = parameters[idx];
+        // tag + value
+        rsp.value.union_tag = p.type;
+        if (p.type == UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE)
         {
-        case UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE:
-            pkt.value.integer_value = p->value;
-            break;
-        case UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE:
-            pkt.value.real_value = p->value;
-            break;
-        default:
-            return;
+            rsp.value.integer_value = p.value;
         }
-        pkt.name.len = strlen(p->name);
-        strcpy((char *)pkt.name.data, p->name);
-    }
+        else
+        {
+            rsp.value.real_value = p.value;
+        }
 
+        // copy name (must pad/zero any unused bytes)
+        size_t namelen = strlen(p.name);
+        rsp.name.len = namelen;
+        memset(rsp.name.data, 0, sizeof(rsp.name.data));
+        memcpy(rsp.name.data, p.name, namelen);
+    }
+    // else idx==SIZE_MAX: leave rsp.name.len=0 / value empty
+
+    // Encode & send
     uint8_t buffer[UAVCAN_PROTOCOL_PARAM_GETSET_RESPONSE_MAX_SIZE];
-    uint16_t total_size = uavcan_protocol_param_GetSetResponse_encode(&pkt, buffer);
-
+    uint16_t len = uavcan_protocol_param_GetSetResponse_encode(&rsp, buffer);
     canardRequestOrRespond(&canard,
                            transfer->source_node_id,
                            UAVCAN_PROTOCOL_PARAM_GETSET_SIGNATURE,
@@ -218,7 +237,7 @@ void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
                            transfer->priority,
                            CanardResponse,
                            &buffer[0],
-                           total_size);
+                           len);
 }
 
 /*
@@ -233,11 +252,19 @@ void DroneCAN::handle_param_ExecuteOpcode(CanardRxTransfer *transfer)
     }
     if (req.opcode == UAVCAN_PROTOCOL_PARAM_EXECUTEOPCODE_REQUEST_OPCODE_ERASE)
     {
-        // here is where you would reset all parameters to defaults
+        // Reset all parameters to defaults
+        for (size_t i = 0; i < parameters.size(); i++)
+        {
+            parameters[i].value = parameters[i].min_value; // Or some default value
+        }
     }
     if (req.opcode == UAVCAN_PROTOCOL_PARAM_EXECUTEOPCODE_REQUEST_OPCODE_SAVE)
     {
-        // here is where you would save all the changed parameters to permanent storage
+        // Save all the changed parameters to permanent storage
+        for (size_t i = 0; i < parameters.size(); i++)
+        {
+            EEPROM.put(i * 4, parameters[i].value);
+        }
     }
 
     struct uavcan_protocol_param_ExecuteOpcodeResponse pkt;
@@ -264,14 +291,12 @@ Read the EEPROM parameter storage and set the current parameter list to the read
 */
 void DroneCAN::read_parameter_memory()
 {
-    struct parameter *p = NULL;
     float p_val = 0.0;
 
-    for (uint16_t i = 0; i < ARRAY_SIZE(parameters); i++)
+    for (size_t i = 0; i < parameters.size(); i++)
     {
         EEPROM.get(i * 4, p_val);
-        p = &parameters[i];
-        p->value = p_val;
+        parameters[i].value = p_val;
     }
 }
 
@@ -432,6 +457,56 @@ void DroneCAN::request_DNA()
  */
 void DroneCAN::handle_begin_firmware_update(CanardRxTransfer *transfer)
 {
+    Serial.println("Update request received");
+
+    auto *comms = (struct app_bootloader_comms *)0x20000000;
+    
+    if (comms->magic != APP_BOOTLOADER_COMMS_MAGIC) {
+        memset(comms, 0, sizeof(*comms));
+    }
+    comms->magic = APP_BOOTLOADER_COMMS_MAGIC;
+
+    uavcan_protocol_file_BeginFirmwareUpdateRequest req;
+    if (uavcan_protocol_file_BeginFirmwareUpdateRequest_decode(transfer, &req))
+    {
+        return;
+    }
+
+    comms->server_node_id = req.source_node_id;
+    if (comms->server_node_id == 0)
+    {
+        comms->server_node_id = transfer->source_node_id;
+    }
+    memcpy(comms->path, req.image_file_remote_path.path.data, req.image_file_remote_path.path.len);
+    comms->my_node_id = canardGetLocalNodeID(&canard);
+
+    uint8_t buffer[UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_RESPONSE_MAX_SIZE];
+    uavcan_protocol_file_BeginFirmwareUpdateResponse reply{};
+    reply.error = UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_RESPONSE_ERROR_OK;
+
+    uint16_t total_size = uavcan_protocol_file_BeginFirmwareUpdateResponse_encode(&reply, buffer);
+    static uint8_t transfer_id;
+    CanardTxTransfer transfer_object = {
+        .transfer_type = CanardTransferTypeResponse,
+        .data_type_signature = UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_SIGNATURE,
+        .data_type_id = UAVCAN_PROTOCOL_FILE_BEGINFIRMWAREUPDATE_ID,
+        .inout_transfer_id = &transfer->transfer_id,
+        .priority = transfer->priority,
+        .payload = &buffer[0],
+        .payload_len = total_size,
+    };
+    const auto res = canardRequestOrRespondObj(&canard,
+                                               transfer->source_node_id,
+                                               &transfer_object);
+
+    uint8_t count = 50;
+    while (count--)
+    {
+        processTx();
+        delay(1);
+    }
+
+    NVIC_SystemReset();
 }
 
 /*
@@ -520,7 +595,7 @@ void DroneCAN::send_NodeStatus(void)
 {
     uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE];
 
-    node_status.uptime_sec = micros64() / 1000000ULL;
+    node_status.uptime_sec = uptime++;
     node_status.health = UAVCAN_PROTOCOL_NODESTATUS_HEALTH_OK;
     node_status.mode = UAVCAN_PROTOCOL_NODESTATUS_MODE_OPERATIONAL;
     node_status.sub_mode = 0;
@@ -584,8 +659,8 @@ void DroneCAN::processRx()
         int ret = canardHandleRxFrame(&canard, &CAN_rx_msg, timestamp);
         if (ret < 0)
         {
-            Serial.print("Canard RX fail");
-            Serial.println(ret);
+            // Serial.print("Canard RX fail");
+            // Serial.println(ret);
         }
     }
 }
@@ -638,7 +713,7 @@ void DroneCANonTransferReceived(DroneCAN &dronecan, CanardInstance *ins, CanardR
         {
             while (1)
             {
-            }; // force the watchdog to reset
+            }
         }
         case UAVCAN_PROTOCOL_PARAM_GETSET_ID:
         {
