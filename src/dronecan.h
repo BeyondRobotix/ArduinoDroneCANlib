@@ -57,7 +57,7 @@ public:
         parameters = param_list;  // Vector automatically handles resizing
     }
 
-    void init(CanardOnTransferReception onTransferReceived, CanardShouldAcceptTransfer shouldAcceptTransfer, const std::vector<parameter>& param_list);
+    void init(CanardOnTransferReception onTransferReceived, CanardShouldAcceptTransfer shouldAcceptTransfer, const std::vector<parameter>& param_list, const char* name);
     int node_id = 0;
 
     CanardInstance canard;
@@ -79,6 +79,13 @@ public:
     void processRx();
     void cycle();
     void debug(const char *msg, uint8_t level);
+    float getParameter(const char* name);
+    int setParameter(const char *name, float value);
+    char node_name[80];
+    int version_major=0;
+    int version_minor=0;
+    int hardware_version_major=0;
+    int hardware_version_minor=0;
 
     struct dynamic_node_allocation
     {
