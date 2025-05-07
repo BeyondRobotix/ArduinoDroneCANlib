@@ -2,9 +2,12 @@
 
 void DroneCAN::init(CanardOnTransferReception onTransferReceived,
                     CanardShouldAcceptTransfer shouldAcceptTransfer,
-                    const std::vector<parameter>& param_list)
+                    const std::vector<parameter>& param_list,
+                    const char* name)
 {
     CANInit(CAN_1000KBPS, 2);
+
+    strncpy(this->node_name, name, sizeof(this->node_name));
 
     canardInit(&canard,
                memory_pool,
@@ -31,15 +34,21 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
     this->read_parameter_memory();
 }
 
+/*
+Gets the node id our DNA requests on init
+*/
 uint8_t DroneCAN::get_preferred_node_id()
 {
-    if (parameters[0].value > 0 && parameters[0].value < 128)
+    float ret = this->getParameter("NODEID");
+    if (ret == __FLT_MIN__)
     {
-        return (uint8_t)parameters[0].value;
+        Serial.println("No NODEID in storage, setting..");
+        this->setParameter("NODEID", PREFERRED_NODE_ID);
+        return PREFERRED_NODE_ID;
     }
     else
     {
-        return PREFERRED_NODE_ID;
+        return (uint8_t)ret;
     }
 }
 
@@ -108,18 +117,18 @@ void DroneCAN::handle_GetNodeInfo(CanardRxTransfer *transfer)
     pkt.status = node_status;
 
     // fill in your major and minor firmware version
-    pkt.software_version.major = 1;
-    pkt.software_version.minor = 2;
+    pkt.software_version.major = this->version_major;
+    pkt.software_version.minor = this->version_minor;
     pkt.software_version.optional_field_flags = 0;
     pkt.software_version.vcs_commit = 0; // should put git hash in here
 
     // should fill in hardware version
-    pkt.hardware_version.major = 2;
-    pkt.hardware_version.minor = 3;
+    pkt.hardware_version.major = this->hardware_version_major;
+    pkt.hardware_version.minor = this->hardware_version_minor;
 
     getUniqueID(pkt.hardware_version.unique_id);
 
-    strncpy((char *)pkt.name.data, "Beyond Robotix Node", sizeof(pkt.name.data));
+    strncpy((char *)pkt.name.data, this->node_name, sizeof(pkt.name.data));
     pkt.name.len = strnlen((char *)pkt.name.data, sizeof(pkt.name.data));
 
     uint16_t total_size = uavcan_protocol_GetNodeInfoResponse_encode(&pkt, buffer);
@@ -301,6 +310,46 @@ void DroneCAN::read_parameter_memory()
 }
 
 /*
+Get a parameter from storage by name
+Only handles float return values
+returns __FLT_MIN__ if no parameter found with the provided name
+*/
+float DroneCAN::getParameter(const char *name)
+{
+    for (size_t i = 0; i < parameters.size(); i++)
+    {
+        auto &p = parameters[i];
+        if (strlen(name) == strlen(p.name) &&
+            memcmp(name, p.name, strlen(name)) == 0)
+        {
+            return parameters[i].value;
+        }
+    }
+    return __FLT_MIN__;
+}
+
+/*
+Set a parameter from storage by name
+Values get stored as floats
+returns -1 if storage failed, 0 if good
+*/
+int DroneCAN::setParameter(const char *name, float value)
+{
+    for (size_t i = 0; i < parameters.size(); i++)
+    {
+        auto &p = parameters[i];
+        if (strlen(name) == strlen(p.name) &&
+            memcmp(name, p.name, strlen(name)) == 0)
+        {
+            parameters[i].value = value;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+
+/*
   handle a DNA allocation packet
  */
 int DroneCAN::handle_DNA_Allocation(CanardRxTransfer *transfer)
@@ -335,7 +384,7 @@ int DroneCAN::handle_DNA_Allocation(CanardRxTransfer *transfer)
     // Matching the received UID against the local one
     if (memcmp(msg.unique_id.data, my_unique_id, msg.unique_id.len) != 0)
     {
-        Serial.println("Mismatching allocation response\n");
+        Serial.println("DNA failed this time");
         DNA.node_id_allocation_unique_id_offset = 0;
         // No match, return
         return 0;
@@ -348,9 +397,6 @@ int DroneCAN::handle_DNA_Allocation(CanardRxTransfer *transfer)
         // the next stage and updating the timeout.
         DNA.node_id_allocation_unique_id_offset = msg.unique_id.len;
         DNA.send_next_node_id_allocation_request_at_ms -= UAVCAN_PROTOCOL_DYNAMIC_NODE_ID_ALLOCATION_MIN_REQUEST_PERIOD_MS;
-
-        Serial.print("Matching allocation response: ");
-        Serial.println(msg.unique_id.len);
     }
     else
     {
@@ -390,7 +436,10 @@ void DroneCAN::request_DNA()
     // Structure of the request is documented in the DSDL definition
     // See http://uavcan.org/Specification/6._Application_level_functions/#dynamic-node-id-allocation
     uint8_t allocation_request[CANARD_CAN_FRAME_MAX_DATA_LEN - 1];
-    allocation_request[0] = (uint8_t)(this->get_preferred_node_id() << 1U);
+    uint8_t pref_node_id = (uint8_t)(this->get_preferred_node_id() << 1U);
+    Serial.print("Requesting ID ");
+    Serial.println(pref_node_id/2); // not sure why this is over 2 .. something to do with the bit shifting but this is what it actually sets
+    allocation_request[0] = pref_node_id;
 
     if (DNA.node_id_allocation_unique_id_offset == 0)
     {
@@ -711,9 +760,24 @@ void DroneCANonTransferReceived(DroneCAN &dronecan, CanardInstance *ins, CanardR
         }
         case UAVCAN_PROTOCOL_RESTARTNODE_ID:
         {
-            while (1)
-            {
-            }
+            
+            uavcan_protocol_RestartNodeResponse pkt{};
+            pkt.ok = true;
+            uint8_t buffer[UAVCAN_PROTOCOL_RESTARTNODE_RESPONSE_MAX_SIZE];
+            uint32_t len = uavcan_protocol_RestartNodeResponse_encode(&pkt, buffer);
+            static uint8_t transfer_id;
+            canardBroadcast(ins,
+                            UAVCAN_PROTOCOL_RESTARTNODE_RESPONSE_SIGNATURE,
+                            UAVCAN_PROTOCOL_RESTARTNODE_RESPONSE_ID,
+                            &transfer_id,
+                            CANARD_TRANSFER_PRIORITY_LOW,
+                            buffer,
+                            len);
+
+            Serial.println("Reset..");
+            delay(200);
+            // yeeeeeet
+            NVIC_SystemReset();
         }
         case UAVCAN_PROTOCOL_PARAM_GETSET_ID:
         {
@@ -768,6 +832,11 @@ bool DroneCANshoudlAcceptTransfer(const CanardInstance *ins,
         case UAVCAN_PROTOCOL_FILE_READ_ID:
         {
             *out_data_type_signature = UAVCAN_PROTOCOL_FILE_READ_SIGNATURE;
+            return true;
+        }
+        case UAVCAN_PROTOCOL_RESTARTNODE_ID:
+        {
+            *out_data_type_signature = UAVCAN_PROTOCOL_RESTARTNODE_ID;
             return true;
         }
         }

@@ -373,9 +373,11 @@ void CANSend(const CanardCANFrame *CAN_tx_msg)
     // The mailbox don't becomes empty while loop
     if (CAN1->sTxMailBox[0].TIR & 0x1UL)
     {
-        Serial.println("Send Fail");
-        Serial.println(CAN1->ESR);
-        Serial.println(CAN1->MSR);
+        Serial.print("Send Fail ");
+        Serial.print(CAN1->ESR);
+        Serial.print(" ");
+        Serial.print(CAN1->MSR);
+        Serial.print(" ");
         Serial.println(CAN1->TSR);
     }
 }
