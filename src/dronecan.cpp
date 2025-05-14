@@ -1,10 +1,14 @@
 #include <dronecan.h>
 
+/*
+    Kick off the CAN driver, Canard, do some parameter management
+*/
 void DroneCAN::init(CanardOnTransferReception onTransferReceived,
                     CanardShouldAcceptTransfer shouldAcceptTransfer,
-                    const std::vector<parameter>& param_list,
-                    const char* name)
+                    const std::vector<parameter> &param_list,
+                    const char *name)
 {
+    // start our CAN driver
     CANInit(CAN_1000KBPS, 2);
 
     strncpy(this->node_name, name, sizeof(this->node_name));
@@ -16,7 +20,7 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
                shouldAcceptTransfer,
                NULL);
 
-    if (node_id > 0)
+    if (this->node_id > 0)
     {
         canardSetLocalNodeID(&canard, node_id);
     }
@@ -24,18 +28,19 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
     {
         Serial.println("Waiting for DNA node allocation");
     }
+
     // initialise the internal LED
     pinMode(19, OUTPUT);
 
     // put our user params into memory
-    set_parameters(param_list);
+    this->set_parameters(param_list);
 
     // get the parameters in the EEPROM
     this->read_parameter_memory();
 }
 
 /*
-Gets the node id our DNA requests on init
+    Gets the node id our DNA requests on init
 */
 uint8_t DroneCAN::get_preferred_node_id()
 {
@@ -53,7 +58,7 @@ uint8_t DroneCAN::get_preferred_node_id()
 }
 
 /*
-Processes any DroneCAN actions required. Call as quickly as practical !
+    Processes any DroneCAN actions required. Call as quickly as practical !
 */
 void DroneCAN::cycle()
 {
@@ -72,11 +77,17 @@ void DroneCAN::cycle()
     this->request_DNA();
 }
 
+/*
+    For compatibility
+*/
 uint64_t DroneCAN::micros64()
 {
     return (uint64_t)micros();
 }
 
+/*
+    Returns the unique STM CPU ID required for DNA
+*/
 void DroneCAN::getUniqueID(uint8_t uniqueId[16])
 {
     memset(uniqueId, 0, 16);
@@ -103,6 +114,9 @@ void DroneCAN::getUniqueID(uint8_t uniqueId[16])
     uniqueId[15] = 0;
 }
 
+/*
+    Responds to a request for node info from CAN devices
+*/
 void DroneCAN::handle_GetNodeInfo(CanardRxTransfer *transfer)
 {
     Serial.print("GetNodeInfo request from");
@@ -145,8 +159,8 @@ void DroneCAN::handle_GetNodeInfo(CanardRxTransfer *transfer)
 }
 
 /*
-  handle parameter GetSet request
- */
+    handle parameter GetSet request
+*/
 void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
 {
     // Decode the incoming request
@@ -250,8 +264,8 @@ void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
 }
 
 /*
-  handle parameter executeopcode request
- */
+    handle parameter executeopcode request
+*/
 void DroneCAN::handle_param_ExecuteOpcode(CanardRxTransfer *transfer)
 {
     struct uavcan_protocol_param_ExecuteOpcodeRequest req;
@@ -296,7 +310,7 @@ void DroneCAN::handle_param_ExecuteOpcode(CanardRxTransfer *transfer)
 }
 
 /*
-Read the EEPROM parameter storage and set the current parameter list to the read values
+    Read the EEPROM parameter storage and set the current parameter list to the read values
 */
 void DroneCAN::read_parameter_memory()
 {
@@ -310,9 +324,9 @@ void DroneCAN::read_parameter_memory()
 }
 
 /*
-Get a parameter from storage by name
-Only handles float return values
-returns __FLT_MIN__ if no parameter found with the provided name
+    Get a parameter from storage by name
+    Only handles float return values
+    returns __FLT_MIN__ if no parameter found with the provided name
 */
 float DroneCAN::getParameter(const char *name)
 {
@@ -329,9 +343,9 @@ float DroneCAN::getParameter(const char *name)
 }
 
 /*
-Set a parameter from storage by name
-Values get stored as floats
-returns -1 if storage failed, 0 if good
+    Set a parameter from storage by name
+    Values get stored as floats
+    returns -1 if storage failed, 0 if good
 */
 int DroneCAN::setParameter(const char *name, float value)
 {
@@ -348,10 +362,9 @@ int DroneCAN::setParameter(const char *name, float value)
     return -1;
 }
 
-
 /*
-  handle a DNA allocation packet
- */
+    handle a DNA allocation packet
+*/
 int DroneCAN::handle_DNA_Allocation(CanardRxTransfer *transfer)
 {
     if (canardGetLocalNodeID(&canard) != CANARD_BROADCAST_NODE_ID)
@@ -409,8 +422,8 @@ int DroneCAN::handle_DNA_Allocation(CanardRxTransfer *transfer)
 }
 
 /*
-  ask for a dynamic node allocation
- */
+    ask for a dynamic node allocation
+*/
 void DroneCAN::request_DNA()
 {
 
@@ -438,7 +451,7 @@ void DroneCAN::request_DNA()
     uint8_t allocation_request[CANARD_CAN_FRAME_MAX_DATA_LEN - 1];
     uint8_t pref_node_id = (uint8_t)(this->get_preferred_node_id() << 1U);
     Serial.print("Requesting ID ");
-    Serial.println(pref_node_id/2); // not sure why this is over 2 .. something to do with the bit shifting but this is what it actually sets
+    Serial.println(pref_node_id / 2); // not sure why this is over 2 .. something to do with the bit shifting but this is what it actually sets
     allocation_request[0] = pref_node_id;
 
     if (DNA.node_id_allocation_unique_id_offset == 0)
@@ -482,21 +495,21 @@ void DroneCAN::request_DNA()
 }
 
 /*
-  handle a BeginFirmwareUpdate request from a management tool like DroneCAN GUI tool or MissionPlanner
+    handle a BeginFirmwareUpdate request from a management tool like DroneCAN GUI tool or MissionPlanner
 
-  There are multiple ways to handle firmware update over DroneCAN:
+    There are multiple ways to handle firmware update over DroneCAN:
 
     1) on BeginFirmwareUpdate reboot to the bootloader, and implement
-       the firmware upudate process in the bootloader. This is good on
-       boards with smaller amounts of flash
+        the firmware upudate process in the bootloader. This is good on
+        boards with smaller amounts of flash
 
     2) if you have enough flash for 2 copies of your firmware then you
-       can use an A/B scheme, where the new firmware is saved to the
-       inactive flash region and a tag is used to indicate which
-       firmware to boot next time
+        can use an A/B scheme, where the new firmware is saved to the
+        inactive flash region and a tag is used to indicate which
+        firmware to boot next time
 
     3) you could write the firmware to secondary storage (such as a
-       microSD) and the bootloader would flash it on next boot
+        microSD) and the bootloader would flash it on next boot
 
     In this example firmware we will write it to a file
     newfirmware.bin, which is option 3
@@ -509,8 +522,9 @@ void DroneCAN::handle_begin_firmware_update(CanardRxTransfer *transfer)
     Serial.println("Update request received");
 
     auto *comms = (struct app_bootloader_comms *)0x20000000;
-    
-    if (comms->magic != APP_BOOTLOADER_COMMS_MAGIC) {
+
+    if (comms->magic != APP_BOOTLOADER_COMMS_MAGIC)
+    {
         memset(comms, 0, sizeof(*comms));
     }
     comms->magic = APP_BOOTLOADER_COMMS_MAGIC;
@@ -559,9 +573,9 @@ void DroneCAN::handle_begin_firmware_update(CanardRxTransfer *transfer)
 }
 
 /*
-  send a read for a firmware update. This asks the client (firmware
-  server) for a piece of the new firmware
- */
+    send a read for a firmware update. This asks the client (firmware
+    server) for a piece of the new firmware
+*/
 void DroneCAN::send_firmware_read(void)
 {
     uint32_t now = millis();
@@ -595,8 +609,8 @@ void DroneCAN::send_firmware_read(void)
 }
 
 /*
-  handle response to send_firmware_read()
- */
+    handle response to send_firmware_read()
+*/
 void DroneCAN::handle_file_read_response(CanardRxTransfer *transfer)
 {
     if ((transfer->transfer_id + 1) % 32 != fwupdate.transfer_id ||
@@ -637,9 +651,9 @@ void DroneCAN::handle_file_read_response(CanardRxTransfer *transfer)
 }
 
 /*
-  send the 1Hz NodeStatus message. This is what allows a node to show
-  up in the DroneCAN GUI tool and in the flight controller logs
- */
+    send the 1Hz NodeStatus message. This is what allows a node to show
+    up in the DroneCAN GUI tool and in the flight controller logs
+*/
 void DroneCAN::send_NodeStatus(void)
 {
     uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE];
@@ -677,6 +691,9 @@ void DroneCAN::send_NodeStatus(void)
                     len);
 }
 
+/*
+    Handle re-occurring slow pace tasks
+*/
 void DroneCAN::process1HzTasks(uint64_t timestamp_usec)
 {
     /*
@@ -690,6 +707,9 @@ void DroneCAN::process1HzTasks(uint64_t timestamp_usec)
     send_NodeStatus();
 }
 
+/*
+    Send any packets currently waiting with Canard
+*/
 void DroneCAN::processTx()
 {
     for (const CanardCANFrame *txf = NULL; (txf = canardPeekTxQueue(&canard)) != NULL;)
@@ -699,6 +719,9 @@ void DroneCAN::processTx()
     }
 }
 
+/*
+    Look at our mailbox
+*/
 void DroneCAN::processRx()
 {
     const uint64_t timestamp = micros();
@@ -714,6 +737,9 @@ void DroneCAN::processRx()
     }
 }
 
+/*
+    Send a debug message over CAN
+*/
 void DroneCAN::debug(const char *msg, uint8_t level)
 {
     uavcan_protocol_debug_LogMessage pkt{};
@@ -733,6 +759,9 @@ void DroneCAN::debug(const char *msg, uint8_t level)
                     len);
 }
 
+/*
+    Bare minimum callback function for DroneCAN library requirements
+*/
 void DroneCANonTransferReceived(DroneCAN &dronecan, CanardInstance *ins, CanardRxTransfer *transfer)
 {
     if (transfer->transfer_type == CanardTransferTypeBroadcast)
@@ -760,7 +789,7 @@ void DroneCANonTransferReceived(DroneCAN &dronecan, CanardInstance *ins, CanardR
         }
         case UAVCAN_PROTOCOL_RESTARTNODE_ID:
         {
-            
+
             uavcan_protocol_RestartNodeResponse pkt{};
             pkt.ok = true;
             uint8_t buffer[UAVCAN_PROTOCOL_RESTARTNODE_RESPONSE_MAX_SIZE];
@@ -798,6 +827,9 @@ void DroneCANonTransferReceived(DroneCAN &dronecan, CanardInstance *ins, CanardR
     }
 }
 
+/*
+    Bare minimum message signing required for DroneCAN library
+*/
 bool DroneCANshoudlAcceptTransfer(const CanardInstance *ins,
                                   uint64_t *out_data_type_signature,
                                   uint16_t data_type_id,
