@@ -45,15 +45,15 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
 uint8_t DroneCAN::get_preferred_node_id()
 {
     float ret = this->getParameter("NODEID");
-    if (ret == __FLT_MIN__)
+    if (ret > 0 || ret < 127)
+    {
+        return (uint8_t)ret;
+    }
+    else
     {
         Serial.println("No NODEID in storage, setting..");
         this->setParameter("NODEID", PREFERRED_NODE_ID);
         return PREFERRED_NODE_ID;
-    }
-    else
-    {
-        return (uint8_t)ret;
     }
 }
 
