@@ -22,7 +22,7 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
 
     if (this->node_id > 0)
     {
-        canardSetLocalNodeID(&canard, node_id);
+        canardSetLocalNodeID(&this->canard, node_id);
     }
     else
     {
@@ -37,6 +37,12 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
 
     // get the parameters in the EEPROM
     this->read_parameter_memory();
+
+    while(canardGetLocalNodeID(&this->canard) == CANARD_BROADCAST_NODE_ID)
+    {
+        this->cycle();
+        IWatchdog.reload();
+    }
 }
 
 /*
