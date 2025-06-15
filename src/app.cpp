@@ -8,6 +8,7 @@
 */
 void app_setup()
 {
+#ifndef DISABLE_APP_SETUP
     SCB->VTOR = 0x0800A000;
     RCC_OscInitTypeDef RCC_OscInitStruct = {};
     RCC_ClkInitTypeDef RCC_ClkInitStruct = {};
@@ -58,5 +59,6 @@ void app_setup()
         Error_Handler();
     }
     NVIC_EnableIRQ(SysTick_IRQn);
+#endif
 }
 
