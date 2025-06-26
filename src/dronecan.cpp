@@ -13,6 +13,8 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
 
     strncpy(this->node_name, name, sizeof(this->node_name));
 
+    IWatchdog.reload();
+
     canardInit(&canard,
                memory_pool,
                sizeof(memory_pool),
@@ -32,6 +34,8 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
     // initialise the internal LED
     pinMode(19, OUTPUT);
 
+    IWatchdog.reload();
+
     // put our user params into memory
     this->set_parameters(param_list);
 
@@ -42,6 +46,9 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
     {
         this->cycle();
         IWatchdog.reload();
+        delay(20);
+        digitalWrite(19, this->led_state);
+        this->led_state = !this->led_state;
     }
 }
 
