@@ -46,7 +46,6 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
     {
         this->cycle();
         IWatchdog.reload();
-        delay(20);
         digitalWrite(19, this->led_state);
         this->led_state = !this->led_state;
     }
@@ -386,6 +385,8 @@ int DroneCAN::handle_DNA_Allocation(CanardRxTransfer *transfer)
         return 0;
     }
 
+    Serial.println("We got a node ID message back");
+
     // Rule C - updating the randomized time interval
     DNA.send_next_node_id_allocation_request_at_ms =
         millis() + UAVCAN_PROTOCOL_DYNAMIC_NODE_ID_ALLOCATION_MIN_REQUEST_PERIOD_MS +
@@ -423,6 +424,7 @@ int DroneCAN::handle_DNA_Allocation(CanardRxTransfer *transfer)
         // the next stage and updating the timeout.
         DNA.node_id_allocation_unique_id_offset = msg.unique_id.len;
         DNA.send_next_node_id_allocation_request_at_ms -= UAVCAN_PROTOCOL_DYNAMIC_NODE_ID_ALLOCATION_MIN_REQUEST_PERIOD_MS;
+        Serial.println("second stage Node ID allocation");
     }
     else
     {
@@ -463,8 +465,10 @@ void DroneCAN::request_DNA()
     // See http://uavcan.org/Specification/6._Application_level_functions/#dynamic-node-id-allocation
     uint8_t allocation_request[CANARD_CAN_FRAME_MAX_DATA_LEN - 1];
     uint8_t pref_node_id = (uint8_t)(this->get_preferred_node_id() << 1U);
+    
     Serial.print("Requesting ID ");
     Serial.println(pref_node_id / 2); // not sure why this is over 2 .. something to do with the bit shifting but this is what it actually sets
+    
     allocation_request[0] = pref_node_id;
 
     if (DNA.node_id_allocation_unique_id_offset == 0)
