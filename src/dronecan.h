@@ -62,6 +62,7 @@ private:
     uint8_t get_preferred_node_id();
 
     void read_parameter_memory();
+    void write_parameter_memory();
     void request_DNA();
     void send_firmware_read();
     void handle_file_read_response(CanardRxTransfer *transfer);
@@ -76,9 +77,11 @@ public:
     {
         const char *name;
         enum uavcan_protocol_param_Value_type_t type;
+        float default_value;
         float value;
         float min_value;
         float max_value;
+        bool read_only;
     };
 
     std::vector<parameter> parameters;

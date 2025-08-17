@@ -42,7 +42,7 @@ void DroneCAN::init(CanardOnTransferReception onTransferReceived,
     // get the parameters in the EEPROM
     this->read_parameter_memory();
 
-    while(canardGetLocalNodeID(&this->canard) == CANARD_BROADCAST_NODE_ID)
+    while (canardGetLocalNodeID(&this->canard) == CANARD_BROADCAST_NODE_ID)
     {
         this->cycle();
         IWatchdog.reload();
@@ -213,23 +213,26 @@ void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
 
     IWatchdog.reload();
 
-    // If it’s a _set_ request, apply the new value
+    // If it’s a _set_ request, apply the new value only if not read-only
     if (idx != SIZE_MAX && req.value.union_tag != UAVCAN_PROTOCOL_PARAM_VALUE_EMPTY)
     {
         auto &p = parameters[idx];
-        switch (p.type)
+        if (!p.read_only)
         {
-        case UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE:
-            p.value = req.value.integer_value;
-            EEPROM.put(idx * sizeof(float), p.value);
-            break;
-        case UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE:
-            p.value = req.value.real_value;
-            EEPROM.put(idx * sizeof(float), p.value);
-            break;
-        default:
-            // unsupported type
-            break;
+            switch (p.type)
+            {
+            case UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE:
+                p.value = req.value.integer_value;
+                EEPROM.put(idx * sizeof(float), p.value);
+                break;
+            case UAVCAN_PROTOCOL_PARAM_VALUE_REAL_VALUE:
+                p.value = req.value.real_value;
+                EEPROM.put(idx * sizeof(float), p.value);
+                break;
+            default:
+                // unsupported type
+                break;
+            }
         }
     }
 
@@ -247,10 +250,18 @@ void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
         if (p.type == UAVCAN_PROTOCOL_PARAM_VALUE_INTEGER_VALUE)
         {
             rsp.value.integer_value = p.value;
+            rsp.default_value.integer_value = p.default_value;
+            rsp.default_value.union_tag = p.type;
+            rsp.min_value.integer_value = p.min_value;
+            rsp.max_value.integer_value = p.max_value;
         }
         else
         {
             rsp.value.real_value = p.value;
+            rsp.default_value.real_value = p.default_value;
+            rsp.min_value.real_value = p.min_value;
+            rsp.max_value.real_value = p.max_value;
+
         }
 
         // copy name (must pad/zero any unused bytes)
@@ -290,8 +301,10 @@ void DroneCAN::handle_param_ExecuteOpcode(CanardRxTransfer *transfer)
         // Reset all parameters to defaults
         for (size_t i = 0; i < parameters.size(); i++)
         {
-            parameters[i].value = parameters[i].min_value; // Or some default value
+            parameters[i].value = parameters[i].default_value;
         }
+        this->write_parameter_memory();
+        Serial.println("All parameters reset to defaults");
     }
     if (req.opcode == UAVCAN_PROTOCOL_PARAM_EXECUTEOPCODE_REQUEST_OPCODE_SAVE)
     {
@@ -331,9 +344,32 @@ void DroneCAN::read_parameter_memory()
     for (size_t i = 0; i < parameters.size(); i++)
     {
         EEPROM.get(i * 4, p_val);
-        parameters[i].value = p_val;
+
+        // If EEPROM value is uninitialized (e.g., NAN or out of bounds), use default_value
+        if (isnan(p_val) || p_val < parameters[i].min_value || p_val > parameters[i].max_value)
+        {
+            parameters[i].value = parameters[i].default_value;
+        }
+        else
+        {
+            parameters[i].value = p_val;
+        }
     }
 }
+
+/*
+    Write all parameters to EEPROM storage
+*/
+void DroneCAN::write_parameter_memory()
+{
+    for (size_t i = 0; i < parameters.size(); i++)
+    {
+        auto &p = parameters[i];
+        // Store as float, regardless of integer/real type
+        EEPROM.put(i * sizeof(float), p.value);
+    }
+}
+
 
 /*
     Get a parameter from storage by name
@@ -367,8 +403,15 @@ int DroneCAN::setParameter(const char *name, float value)
         if (strlen(name) == strlen(p.name) &&
             memcmp(name, p.name, strlen(name)) == 0)
         {
-            parameters[i].value = value;
-            return 0;
+            if (!p.read_only)
+            {
+                parameters[i].value = value;
+                return 0;
+            }
+            else
+            {
+                return -1; // read-only
+            }
         }
     }
     return -1;
@@ -465,10 +508,10 @@ void DroneCAN::request_DNA()
     // See http://uavcan.org/Specification/6._Application_level_functions/#dynamic-node-id-allocation
     uint8_t allocation_request[CANARD_CAN_FRAME_MAX_DATA_LEN - 1];
     uint8_t pref_node_id = (uint8_t)(this->get_preferred_node_id() << 1U);
-    
+
     Serial.print("Requesting ID ");
     Serial.println(pref_node_id / 2); // not sure why this is over 2 .. something to do with the bit shifting but this is what it actually sets
-    
+
     allocation_request[0] = pref_node_id;
 
     if (DNA.node_id_allocation_unique_id_offset == 0)
