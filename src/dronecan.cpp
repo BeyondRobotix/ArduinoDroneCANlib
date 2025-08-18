@@ -131,7 +131,7 @@ void DroneCAN::getUniqueID(uint8_t uniqueId[16])
 */
 void DroneCAN::handle_GetNodeInfo(CanardRxTransfer *transfer)
 {
-    Serial.print("GetNodeInfo request from");
+    Serial.print("GetNodeInfo request from: ");
     Serial.println(transfer->source_node_id);
 
     uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE];
@@ -190,7 +190,7 @@ void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
     if ((int)req.name.len > 0)
     {
         // Name‐based lookup
-        Serial.print("Name based lookup");
+        Serial.print("Name based look up: ");
         for (size_t i = 0; i < parameters.size(); i++)
         {
             auto &p = parameters[i];
@@ -207,7 +207,7 @@ void DroneCAN::handle_param_GetSet(CanardRxTransfer *transfer)
     if (idx == SIZE_MAX && req.index < parameters.size())
     {
         idx = req.index;
-        Serial.print("Parameter index lookup");
+        Serial.print("Parameter index look up: ");
         Serial.println(idx);
     }
 
