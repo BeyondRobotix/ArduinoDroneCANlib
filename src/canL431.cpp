@@ -1,5 +1,5 @@
 #include "Arduino.h"
-#include "can.h"
+#include "canL431.h"
 
 #define DEBUG 0
 #define AF3 0x03
